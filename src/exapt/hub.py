@@ -260,7 +260,10 @@ class BucketStore:
             },
             "stages": stages,
         }
-        frozen = {"schema_version": 1, "config": config, "inputs": inputs}
+        # normalize JSON arrays before comparing remote stage metadata
+        frozen = json.loads(json.dumps({
+            "schema_version": 1, "config": config, "inputs": inputs,
+        }))
 
         for remote, value in (
             (f"{self.run_id}/run.json", run),

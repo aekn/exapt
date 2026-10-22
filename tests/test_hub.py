@@ -199,6 +199,85 @@ class HubTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Run ID"):
                 BucketStore(BUCKET, "001", "fit").prepare_stage(**settings)
 
+    def test_immutable_config_accepts_json_roundtrip(self):
+        fake = FakeBucket()
+        settings: StageSettings = {
+            "program": "exaptgnn-v1",
+            "seed": 163,
+            "config": {
+                "steps": 3, "optimizer": "AdamW",
+                "betas": (0.9, 0.999),
+            },
+            "inputs": {"pretrain.pt": "inputhash"},
+            "source_commit": HASH,
+            "dataset_revision": HASH,
+            "manifest_sha256": "b" * 64,
+        }
+        with fake.mocked():
+            first = BucketStore(BUCKET, "002", "pretrain")
+            first.prepare_stage(**settings)
+            saved = json.loads(fake.objects["002/pretrain/config.json"])
+            self.assertEqual(saved["config"]["betas"], [0.9, 0.999])
+
+            resumed = BucketStore(BUCKET, "002", "pretrain")
+            resumed.prepare_stage(**settings)
+
+            changed: StageSettings = {
+                **settings,
+                "config": {**settings["config"], "betas": (0.8, 0.999)},
+            }
+            with self.assertRaisesRegex(ValueError, "identity/config"):
+                resumed.prepare_stage(**changed)
+
+    def test_fresh_runtime_pretrain_restores_optimizer(self):
+        from exapt.pretrain import prepare_pretrain, pretrain_model
+
+        fake = FakeBucket()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            data.mkdir()
+            (data / "nodes.csv").write_text(
+                "index,type,id\n" + "".join(
+                    f"{i},drug,D{i}\n" for i in range(120)
+                )
+            )
+            (data / "graph.csv").write_text(
+                "x_index,x_type,relation,y_index,y_type\n" + "".join(
+                    f"{i},drug,drug_drug,{i + 1},drug\n"
+                    f"{i + 1},drug,drug_drug,{i},drug\n"
+                    for i in range(119)
+                )
+            )
+            prepared = root / "pretrain.pt"
+            prepare_pretrain(data, prepared)
+            settings = {
+                "steps": 3, "width": 4, "batch_size": 32,
+                "eval_every": 1, "checkpoint_every": 1,
+                "run_id": "998", "bucket": BUCKET,
+                "source_commit": HASH, "dataset_revision": HASH,
+                "manifest_sha256": "b" * 64,
+            }
+            with fake.mocked(), patch(
+                "exapt.hub.verify_training_inputs", return_value=None,
+            ):
+                pretrain_model(
+                    prepared, root / "initial", stop_after=1, **settings,
+                )
+                restored = root / "fresh"
+                pointer = BucketStore(
+                    BUCKET, "998", "pretrain",
+                ).recover(restored)
+                self.assertEqual(load_snapshot(pointer)["position"], 1)
+                result = pretrain_model(
+                    prepared, restored, resume=pointer, **settings,
+                )
+                self.assertEqual(result["completed_steps"], 3)
+                latest = json.loads(
+                    fake.objects["998/pretrain/latest.json"]
+                )
+                self.assertEqual(latest["current"]["step"], 3)
+
     def test_two_recovery_snapshots_and_fallback(self):
         fake = FakeBucket()
         with fake.mocked(), tempfile.TemporaryDirectory() as temporary:
