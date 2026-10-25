@@ -1,0 +1,576 @@
+{
+  "rows": 8100498,
+  "nodes": 129375,
+  "node_types": {
+    "anatomy": 14035,
+    "biological_process": 28642,
+    "cellular_component": 4176,
+    "disease": 17080,
+    "drug": 7957,
+    "effect/phenotype": 15311,
+    "exposure": 818,
+    "gene/protein": 27671,
+    "molecular_function": 11169,
+    "pathway": 2516
+  },
+  "index_range": [
+    0,
+    129374
+  ],
+  "contiguous_indices": true,
+  "index_identity_conflicts": 0,
+  "index_name_conflicts": 0,
+  "typed_identifier_aliases": 63,
+  "typed_aliases_by_type": {
+    "anatomy": 2,
+    "gene/protein": 61
+  },
+  "typed_aliases_with_different_names": 63,
+  "index_identity_examples": [],
+  "index_name_examples": [],
+  "typed_alias_examples": [
+    {
+      "type": "anatomy",
+      "source": "UBERON",
+      "id": "468",
+      "first_index": 63373,
+      "other_index": 129373,
+      "first_name": "multicellular organism",
+      "other_name": "multi-cellular organism"
+    },
+    {
+      "type": "anatomy",
+      "source": "UBERON",
+      "id": "992",
+      "first_index": 63461,
+      "other_index": 129374,
+      "first_name": "ovary",
+      "other_name": "female gonad"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "113201",
+      "first_index": 9792,
+      "other_index": 34042,
+      "first_name": "GOLM2",
+      "other_name": "CASC4"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "115948",
+      "first_index": 9854,
+      "other_index": 35195,
+      "first_name": "ODAD3",
+      "other_name": "CCDC151"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "132332",
+      "first_index": 83713,
+      "other_index": 34750,
+      "first_name": "SMIM43",
+      "other_name": "TMEM155"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "137392",
+      "first_index": 13548,
+      "other_index": 34545,
+      "first_name": "CIBAR1",
+      "other_name": "FAM92A"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "139212",
+      "first_index": 10009,
+      "other_index": 35196,
+      "first_name": "DNAAF6",
+      "other_name": "PIH1D3"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "144577",
+      "first_index": 13763,
+      "other_index": 34708,
+      "first_name": "KICS2",
+      "other_name": "C12orf66"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "157657",
+      "first_index": 57109,
+      "other_index": 34503,
+      "first_name": "CFAP418",
+      "other_name": "C8orf37"
+    },
+    {
+      "type": "gene/protein",
+      "source": "NCBI",
+      "id": "23247",
+      "first_index": 11990,
+      "other_index": 35011,
+      "first_name": "KATNIP",
+      "other_name": "KIAA0556"
+    }
+  ],
+  "relations": {
+    "anatomy_anatomy": 28064,
+    "anatomy_protein_absent": 39774,
+    "anatomy_protein_present": 3036406,
+    "bioprocess_bioprocess": 105772,
+    "bioprocess_protein": 289610,
+    "cellcomp_cellcomp": 9690,
+    "cellcomp_protein": 166804,
+    "contraindication": 61350,
+    "disease_disease": 64388,
+    "disease_phenotype_negative": 2386,
+    "disease_phenotype_positive": 300634,
+    "disease_protein": 160822,
+    "drug_drug": 2672628,
+    "drug_effect": 129568,
+    "drug_protein": 51306,
+    "exposure_bioprocess": 3250,
+    "exposure_cellcomp": 20,
+    "exposure_disease": 4608,
+    "exposure_exposure": 4140,
+    "exposure_molfunc": 90,
+    "exposure_protein": 2424,
+    "indication": 18776,
+    "molfunc_molfunc": 27148,
+    "molfunc_protein": 139060,
+    "off-label use": 5136,
+    "pathway_pathway": 5070,
+    "pathway_protein": 85292,
+    "phenotype_phenotype": 37472,
+    "phenotype_protein": 6660,
+    "protein_protein": 642150
+  },
+  "typed_signatures": [
+    {
+      "relation": "anatomy_anatomy",
+      "source_type": "anatomy",
+      "target_type": "anatomy",
+      "rows": 28064
+    },
+    {
+      "relation": "anatomy_protein_absent",
+      "source_type": "anatomy",
+      "target_type": "gene/protein",
+      "rows": 19887
+    },
+    {
+      "relation": "anatomy_protein_absent",
+      "source_type": "gene/protein",
+      "target_type": "anatomy",
+      "rows": 19887
+    },
+    {
+      "relation": "anatomy_protein_present",
+      "source_type": "anatomy",
+      "target_type": "gene/protein",
+      "rows": 1518203
+    },
+    {
+      "relation": "anatomy_protein_present",
+      "source_type": "gene/protein",
+      "target_type": "anatomy",
+      "rows": 1518203
+    },
+    {
+      "relation": "bioprocess_bioprocess",
+      "source_type": "biological_process",
+      "target_type": "biological_process",
+      "rows": 105772
+    },
+    {
+      "relation": "bioprocess_protein",
+      "source_type": "biological_process",
+      "target_type": "gene/protein",
+      "rows": 144805
+    },
+    {
+      "relation": "bioprocess_protein",
+      "source_type": "gene/protein",
+      "target_type": "biological_process",
+      "rows": 144805
+    },
+    {
+      "relation": "cellcomp_cellcomp",
+      "source_type": "cellular_component",
+      "target_type": "cellular_component",
+      "rows": 9690
+    },
+    {
+      "relation": "cellcomp_protein",
+      "source_type": "cellular_component",
+      "target_type": "gene/protein",
+      "rows": 83402
+    },
+    {
+      "relation": "cellcomp_protein",
+      "source_type": "gene/protein",
+      "target_type": "cellular_component",
+      "rows": 83402
+    },
+    {
+      "relation": "contraindication",
+      "source_type": "disease",
+      "target_type": "drug",
+      "rows": 30675
+    },
+    {
+      "relation": "contraindication",
+      "source_type": "drug",
+      "target_type": "disease",
+      "rows": 30675
+    },
+    {
+      "relation": "disease_disease",
+      "source_type": "disease",
+      "target_type": "disease",
+      "rows": 64388
+    },
+    {
+      "relation": "disease_phenotype_negative",
+      "source_type": "disease",
+      "target_type": "effect/phenotype",
+      "rows": 1193
+    },
+    {
+      "relation": "disease_phenotype_negative",
+      "source_type": "effect/phenotype",
+      "target_type": "disease",
+      "rows": 1193
+    },
+    {
+      "relation": "disease_phenotype_positive",
+      "source_type": "disease",
+      "target_type": "effect/phenotype",
+      "rows": 150317
+    },
+    {
+      "relation": "disease_phenotype_positive",
+      "source_type": "effect/phenotype",
+      "target_type": "disease",
+      "rows": 150317
+    },
+    {
+      "relation": "disease_protein",
+      "source_type": "disease",
+      "target_type": "gene/protein",
+      "rows": 80411
+    },
+    {
+      "relation": "disease_protein",
+      "source_type": "gene/protein",
+      "target_type": "disease",
+      "rows": 80411
+    },
+    {
+      "relation": "drug_drug",
+      "source_type": "drug",
+      "target_type": "drug",
+      "rows": 2672628
+    },
+    {
+      "relation": "drug_effect",
+      "source_type": "drug",
+      "target_type": "effect/phenotype",
+      "rows": 64784
+    },
+    {
+      "relation": "drug_effect",
+      "source_type": "effect/phenotype",
+      "target_type": "drug",
+      "rows": 64784
+    },
+    {
+      "relation": "drug_protein",
+      "source_type": "drug",
+      "target_type": "gene/protein",
+      "rows": 25653
+    },
+    {
+      "relation": "drug_protein",
+      "source_type": "gene/protein",
+      "target_type": "drug",
+      "rows": 25653
+    },
+    {
+      "relation": "exposure_bioprocess",
+      "source_type": "biological_process",
+      "target_type": "exposure",
+      "rows": 1625
+    },
+    {
+      "relation": "exposure_bioprocess",
+      "source_type": "exposure",
+      "target_type": "biological_process",
+      "rows": 1625
+    },
+    {
+      "relation": "exposure_cellcomp",
+      "source_type": "cellular_component",
+      "target_type": "exposure",
+      "rows": 10
+    },
+    {
+      "relation": "exposure_cellcomp",
+      "source_type": "exposure",
+      "target_type": "cellular_component",
+      "rows": 10
+    },
+    {
+      "relation": "exposure_disease",
+      "source_type": "disease",
+      "target_type": "exposure",
+      "rows": 2304
+    },
+    {
+      "relation": "exposure_disease",
+      "source_type": "exposure",
+      "target_type": "disease",
+      "rows": 2304
+    },
+    {
+      "relation": "exposure_exposure",
+      "source_type": "exposure",
+      "target_type": "exposure",
+      "rows": 4140
+    },
+    {
+      "relation": "exposure_molfunc",
+      "source_type": "exposure",
+      "target_type": "molecular_function",
+      "rows": 45
+    },
+    {
+      "relation": "exposure_molfunc",
+      "source_type": "molecular_function",
+      "target_type": "exposure",
+      "rows": 45
+    },
+    {
+      "relation": "exposure_protein",
+      "source_type": "exposure",
+      "target_type": "gene/protein",
+      "rows": 1212
+    },
+    {
+      "relation": "exposure_protein",
+      "source_type": "gene/protein",
+      "target_type": "exposure",
+      "rows": 1212
+    },
+    {
+      "relation": "indication",
+      "source_type": "disease",
+      "target_type": "drug",
+      "rows": 9388
+    },
+    {
+      "relation": "indication",
+      "source_type": "drug",
+      "target_type": "disease",
+      "rows": 9388
+    },
+    {
+      "relation": "molfunc_molfunc",
+      "source_type": "molecular_function",
+      "target_type": "molecular_function",
+      "rows": 27148
+    },
+    {
+      "relation": "molfunc_protein",
+      "source_type": "gene/protein",
+      "target_type": "molecular_function",
+      "rows": 69530
+    },
+    {
+      "relation": "molfunc_protein",
+      "source_type": "molecular_function",
+      "target_type": "gene/protein",
+      "rows": 69530
+    },
+    {
+      "relation": "off-label use",
+      "source_type": "disease",
+      "target_type": "drug",
+      "rows": 2568
+    },
+    {
+      "relation": "off-label use",
+      "source_type": "drug",
+      "target_type": "disease",
+      "rows": 2568
+    },
+    {
+      "relation": "pathway_pathway",
+      "source_type": "pathway",
+      "target_type": "pathway",
+      "rows": 5070
+    },
+    {
+      "relation": "pathway_protein",
+      "source_type": "gene/protein",
+      "target_type": "pathway",
+      "rows": 42646
+    },
+    {
+      "relation": "pathway_protein",
+      "source_type": "pathway",
+      "target_type": "gene/protein",
+      "rows": 42646
+    },
+    {
+      "relation": "phenotype_phenotype",
+      "source_type": "effect/phenotype",
+      "target_type": "effect/phenotype",
+      "rows": 37472
+    },
+    {
+      "relation": "phenotype_protein",
+      "source_type": "effect/phenotype",
+      "target_type": "gene/protein",
+      "rows": 3330
+    },
+    {
+      "relation": "phenotype_protein",
+      "source_type": "gene/protein",
+      "target_type": "effect/phenotype",
+      "rows": 3330
+    },
+    {
+      "relation": "protein_protein",
+      "source_type": "gene/protein",
+      "target_type": "gene/protein",
+      "rows": 642150
+    }
+  ],
+  "display_labels": {
+    "anatomy_anatomy": [
+      "parent-child"
+    ],
+    "anatomy_protein_absent": [
+      "expression absent"
+    ],
+    "anatomy_protein_present": [
+      "expression present"
+    ],
+    "bioprocess_bioprocess": [
+      "parent-child"
+    ],
+    "bioprocess_protein": [
+      "interacts with"
+    ],
+    "cellcomp_cellcomp": [
+      "parent-child"
+    ],
+    "cellcomp_protein": [
+      "interacts with"
+    ],
+    "contraindication": [
+      "contraindication"
+    ],
+    "disease_disease": [
+      "parent-child"
+    ],
+    "disease_phenotype_negative": [
+      "phenotype absent"
+    ],
+    "disease_phenotype_positive": [
+      "phenotype present"
+    ],
+    "disease_protein": [
+      "associated with"
+    ],
+    "drug_drug": [
+      "synergistic interaction"
+    ],
+    "drug_effect": [
+      "side effect"
+    ],
+    "drug_protein": [
+      "carrier",
+      "enzyme",
+      "target",
+      "transporter"
+    ],
+    "exposure_bioprocess": [
+      "interacts with"
+    ],
+    "exposure_cellcomp": [
+      "interacts with"
+    ],
+    "exposure_disease": [
+      "linked to"
+    ],
+    "exposure_exposure": [
+      "parent-child"
+    ],
+    "exposure_molfunc": [
+      "interacts with"
+    ],
+    "exposure_protein": [
+      "interacts with"
+    ],
+    "indication": [
+      "indication"
+    ],
+    "molfunc_molfunc": [
+      "parent-child"
+    ],
+    "molfunc_protein": [
+      "interacts with"
+    ],
+    "off-label use": [
+      "off-label use"
+    ],
+    "pathway_pathway": [
+      "parent-child"
+    ],
+    "pathway_protein": [
+      "interacts with"
+    ],
+    "phenotype_phenotype": [
+      "parent-child"
+    ],
+    "phenotype_protein": [
+      "associated with"
+    ],
+    "protein_protein": [
+      "ppi"
+    ]
+  },
+  "therapy": {
+    "indication": {
+      "pairs": 9388,
+      "diseases": 1363
+    },
+    "contraindication": {
+      "pairs": 30675,
+      "diseases": 1195
+    },
+    "off-label use": {
+      "pairs": 2568,
+      "diseases": 750
+    }
+  },
+  "therapeutic_reverse_mismatches": {
+    "indication": 0,
+    "contraindication": 0,
+    "off-label use": 0
+  },
+  "therapeutic_overlaps": {
+    "indication_contraindication": 87,
+    "indication_off_label": 125,
+    "contraindication_off_label": 37
+  }
+}

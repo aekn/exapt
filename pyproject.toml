@@ -5,19 +5,26 @@ description = "Biomedical graph learning for drug repurposing"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "huggingface-hub==2.2.0",
-    "torch>=2.14,<2.15",
+    "huggingface-hub>=2.3.0,<3.0.0",
+    "polars>=2.0.0,<3.0.0",
 ]
 
-[project.scripts]
-exapt = "exapt:main"
+[project.optional-dependencies]
+train = [
+    "torch>=2.14.1,<3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1,<10.0.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.basedpyright]
-include = ["src", "tests"]
+include = ["src", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 failOnWarnings = false

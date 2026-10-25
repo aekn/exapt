@@ -1,140 +1,222 @@
+from __future__ import annotations
+
 import csv
 from array import array
-from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable, NamedTuple, Sequence
 
-import torch
-
-from .data import THERAPEUTIC_RELATIONS, sha256_file
-
-
-type Relation = tuple[str, str, str]
+from .primekg import COLUMNS, THERAPY, verify_primekg
 
 
-@dataclass
-class Graph:
-    nodes: dict[int, int]
+Pair = tuple[int, int]  # (drug index, disease index)
+
+
+class Relation(NamedTuple):
+    source_type: str
+    name: str
+    display: str
+    target_type: str
+
+
+class Edges(NamedTuple):
+    source: memoryview
+    target: memoryview
+
+    def __len__(self) -> int:
+        return len(self.source)
+
+
+class Graph(NamedTuple):
+    node_types: tuple[str, ...]
     relations: tuple[Relation, ...]
-    adjacency: tuple[torch.Tensor, ...]
+    edges: tuple[Edges, ...]
 
-    def to(self, device: torch.device) -> "Graph":
-        return Graph(
-            self.nodes,
-            self.relations,
-            tuple(matrix.to(device) for matrix in self.adjacency),
-        )
+    @property
+    def node_count(self) -> int:
+        return len(self.node_types)
 
-
-def _mean_adjacency(
-    targets: torch.Tensor, sources: torch.Tensor, node_count: int
-) -> torch.Tensor:
-    # A_r[dst, src] = 1 / degree_r(dst)
-    # A_r @ H
-    # each node gets mean of incoming r neighbors
-    indices = torch.stack((targets, sources))
-    degree = torch.bincount(targets, minlength=node_count)
-    weights = degree[targets].reciprocal()
-
-    return torch.sparse_coo_tensor(
-        indices, weights, (node_count, node_count), check_invariants=True
-    ).coalesce()
+    @property
+    def edge_count(self) -> int:
+        return sum(len(edges) for edges in self.edges)
 
 
-def load_graph(directory: Path) -> Graph:
-    if directory.is_file():
-        saved = torch.load(directory, map_location="cpu", weights_only=True)
-        return Graph(
-            {index: index for index in range(saved["nodes"])},
-            tuple(tuple(relation) for relation in saved["relations"]),
-            tuple(saved["adjacency"]),
-        )
-
-    with (directory / "nodes.csv").open(newline="") as stream:
-        nodes = {
-            int(row["index"]): index
-            for index, row in enumerate(csv.DictReader(stream))
-        }
-
-    edges: dict[Relation, list[tuple[int, int]]] = defaultdict(list)
-    with (directory / "graph.csv").open(newline="") as stream:
-        for row in csv.DictReader(stream):
-            if row["relation"] in THERAPEUTIC_RELATIONS:
-                raise ValueError("Therapeutic edges are not message edges")
-
-            relation = (row["x_type"], row["relation"], row["y_type"])
-            source = nodes[int(row["x_index"])]
-            target = nodes[int(row["y_index"])]
-            edges[relation].append((target, source))
-
-    relations = tuple(sorted(edges))
-    adjacency: list[torch.Tensor] = []
-
-    for relation in relations:
-        pairs = torch.tensor(edges[relation], dtype=torch.long).T
-        adjacency.append(_mean_adjacency(pairs[0], pairs[1], len(nodes)))
-
-    return Graph(nodes, relations, tuple(adjacency))
+def _edge_views(source: array, target: array) -> Edges:
+    return Edges(memoryview(source).toreadonly(), memoryview(target).toreadonly())
 
 
-def prepare_graph(source: Path, output: Path) -> dict[str, object]:
-    edges: dict[Relation, tuple[array, array]] = {}
-    nodes: set[int] = set()
+def read_graph(rows: Iterable[Sequence[str]]) -> Graph:
+    if array("I").itemsize != 4:
+        raise RuntimeError("graph: expected 32-bit unsigned array storage")
 
-    with source.open("r", encoding="utf-8-sig", newline="") as stream:
-        reader = csv.reader(stream)
-        header = next(reader)
-        relation_col = header.index("relation")
-        source_col = header.index("x_index")
-        source_type_col = header.index("x_type")
-        target_col = header.index("y_index")
-        target_type_col = header.index("y_type")
+    node_types: list[str] = []
+    buckets: dict[Relation, tuple[array, array]] = {}
 
-        for row in reader:
-            src, dst = int(row[source_col]), int(row[target_col])
-            nodes.update((src, dst))
+    for line, row in enumerate(rows, start=2):
+        if len(row) != len(COLUMNS):
+            raise ValueError(f"primekg: row {line}: expected {len(COLUMNS)} fields, got {len(row)}")
 
-            # remove therapeutic edges from graph
-            if row[relation_col] in THERAPEUTIC_RELATIONS:
-                continue
+        (
+            name, display,
+            source_index, source_id, source_type, _, _,
+            target_index, target_id, target_type, _, _,
+        ) = row
 
-            relation = (
-                row[source_type_col], row[relation_col], row[target_type_col]
-            )
-            if relation not in edges:
-                edges[relation] = (array("i"), array("i"))
+        try:
+            source, target = int(source_index), int(target_index)
+        except ValueError as error:
+            raise ValueError(f"primekg: row {line}: invalid node index") from error
+        if source < 0 or target < 0:
+            raise ValueError(f"primekg: row {line}: negative node index")
+        if not (name and display and source_id and source_type and target_id and target_type):
+            raise ValueError(f"primekg: row {line}: missing required field")
+        if source >= 2**32 or target >= 2**32:
+            raise ValueError(f"primekg: row {line}: node index exceeds 32-bit storage")
+        if name in THERAPY and (source_type, target_type) not in (
+            ("drug", "disease"), ("disease", "drug"),
+        ):
+            raise ValueError(f"primekg: row {line}: invalid therapeutic endpoints")
 
-            targets, sources = edges[relation]
-            targets.append(dst)
-            sources.append(src)
+        needed = max(source, target) + 1
+        if needed > len(node_types):
+            node_types.extend([""] * (needed - len(node_types)))
 
-    # embedding rows indexed by raw IDs
-    if nodes != set(range(len(nodes))):
-        raise ValueError("Expected contiguous source node indices")
+        for index, kind in ((source, source_type), (target, target_type)):
+            previous = node_types[index]
+            if previous and previous != kind:
+                raise ValueError(f"primekg: row {line}: inconsistent node type for index {index}")
+            node_types[index] = kind
 
-    relations = tuple(sorted(edges))
-    adjacency: list[torch.Tensor] = []
+        relation = Relation(source_type, name, display, target_type)
+        bucket = buckets.get(relation)
+        if bucket is None:
+            bucket = (array("I"), array("I"))
+            buckets[relation] = bucket
 
-    for relation in relations:
-        targets, sources = edges[relation]
-        target_index = torch.tensor(targets, dtype=torch.long)
-        source_index = torch.tensor(sources, dtype=torch.long)
-        adjacency.append(
-            _mean_adjacency(target_index, source_index, len(nodes))
-        )
+        sources, targets = bucket
+        sources.append(source)
+        targets.append(target)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {"nodes": len(nodes), "relations": relations, "adjacency": adjacency},
-        output,
+    relations = tuple(sorted(buckets))
+    return Graph(
+        tuple(node_types),
+        relations,
+        tuple(_edge_views(*buckets[relation]) for relation in relations),
     )
 
-    return {
-        "source_sha256": sha256_file(source),
-        "nodes": len(nodes),
-        "directed_edges": sum(len(targets) for targets, _ in edges.values()),
-        "unique_edges": sum(matrix._nnz() for matrix in adjacency),
-        "relations": len(relations),
-        "file": output.name,
-        "sha256": sha256_file(output),
-    }
+
+def load_graph(
+    root: Path,
+    *,
+    withheld_diseases: frozenset[int],
+    masked_pairs: frozenset[Pair],
+) -> Graph:
+    path = verify_primekg(root)
+    with path.open("r", encoding="utf-8", newline="") as stream:
+        reader = csv.reader(stream, strict=True)
+        if tuple(next(reader, ())) != COLUMNS:
+            raise ValueError("primekg: unexpected CSV header")
+        graph = read_graph(reader)
+
+    return message_graph(
+        graph,
+        withheld_diseases=withheld_diseases,
+        masked_pairs=masked_pairs,
+    )
+
+
+def message_graph(
+    graph: Graph,
+    *,
+    withheld_diseases: frozenset[int],
+    masked_pairs: frozenset[Pair],
+) -> Graph:
+    for disease in withheld_diseases:
+        if not (0 <= disease < graph.node_count and graph.node_types[disease] == "disease"):
+            raise ValueError(f"graph: invalid withheld disease {disease}")
+
+    for drug, disease in masked_pairs:
+        if not (0 <= drug < graph.node_count and graph.node_types[drug] == "drug"):
+            raise ValueError(f"graph: invalid masked drug {drug}")
+        if not (0 <= disease < graph.node_count and graph.node_types[disease] == "disease"):
+            raise ValueError(f"graph: invalid masked disease {disease}")
+
+    visible: list[Edges] = []
+
+    for relation, edges in zip(graph.relations, graph.edges, strict=True):
+        if relation.name not in THERAPY:
+            visible.append(edges)
+            continue
+
+        endpoints = (relation.source_type, relation.target_type)
+        if endpoints == ("drug", "disease"):
+            drug_first = True
+        elif endpoints == ("disease", "drug"):
+            drug_first = False
+        else:
+            raise ValueError(f"graph: invalid therapeutic relation {relation}")
+
+        if not withheld_diseases and not masked_pairs:
+            visible.append(edges)
+            continue
+
+        sources, targets = array("I"), array("I")
+        for source, target in zip(edges.source, edges.target, strict=True):
+            drug, disease = (source, target) if drug_first else (target, source)
+            if disease in withheld_diseases or (drug, disease) in masked_pairs:
+                continue
+            sources.append(source)
+            targets.append(target)
+
+        visible.append(_edge_views(sources, targets))
+
+    return Graph(graph.node_types, graph.relations, tuple(visible))
+
+
+def mask_disease_protein_context(
+    graph: Graph, diseases: frozenset[int], *, fraction: float, seed: int,
+) -> Graph:
+    """Remove the same sampled disease-protein pairs in both arc directions."""
+    import random
+
+    if not 0 <= fraction <= 1:
+        raise ValueError("graph: invalid context mask fraction")
+    if any(not (0 <= d < graph.node_count and graph.node_types[d] == "disease") for d in diseases):
+        raise ValueError("graph: invalid context disease")
+
+    neighborhoods: dict[int, set[int]] = {d: set() for d in diseases}
+    for relation, edges in zip(graph.relations, graph.edges, strict=True):
+        if relation.name != "disease_protein":
+            continue
+        if (relation.source_type, relation.target_type) == ("disease", "gene/protein"):
+            orientation = True
+        elif (relation.source_type, relation.target_type) == ("gene/protein", "disease"):
+            orientation = False
+        else:
+            raise ValueError("graph: unexpected disease_protein endpoints")
+        for x, y in zip(edges.source, edges.target, strict=True):
+            disease, protein = (x, y) if orientation else (y, x)
+            if disease in neighborhoods:
+                neighborhoods[disease].add(protein)
+
+    generator = random.Random(seed)
+    removed: set[tuple[int, int]] = set()
+    for disease, proteins in sorted(neighborhoods.items()):
+        ordered = sorted(proteins)
+        removed.update((disease, protein) for protein in generator.sample(
+            ordered, int(len(ordered) * fraction),
+        ))
+
+    visible: list[Edges] = []
+    for relation, edges in zip(graph.relations, graph.edges, strict=True):
+        if relation.name != "disease_protein" or not removed:
+            visible.append(edges)
+            continue
+        forward = relation.source_type == "disease"
+        sources, targets = array("I"), array("I")
+        for source, target in zip(edges.source, edges.target, strict=True):
+            disease, protein = (source, target) if forward else (target, source)
+            if (disease, protein) not in removed:
+                sources.append(source)
+                targets.append(target)
+        visible.append(_edge_views(sources, targets))
+    return Graph(graph.node_types, graph.relations, tuple(visible))
