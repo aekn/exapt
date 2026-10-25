@@ -33,9 +33,20 @@ def main() -> None:
     )
     model.add_argument("--layout", required=True, choices=("coo", "csr"))
     model.add_argument("--features", required=True, choices=("trainable", "fixed"))
+    model.add_argument("--dropout", type=float, default=0.0)
 
     optimization = parser.add_argument_group("optimization")
-    optimization.add_argument("--objective", choices=("bce", "bpr", "lsep"), default="bce")
+    optimization.add_argument(
+        "--objective", choices=("bce", "bpr", "lsep", "lsep_mean"), default="bce",
+    )
+    optimization.add_argument(
+        "--candidate-pool", choices=("sampled", "full"), default="sampled",
+    )
+    optimization.add_argument(
+        "--scheduler", choices=("constant", "cosine"), default="constant",
+    )
+    optimization.add_argument("--schedule-epochs", type=int)
+    optimization.add_argument("--min-learning-rate", type=float, default=0.0)
     optimization.add_argument(
         "--seed", required=True, type=int, help="initialization and sampling seed",
     )
@@ -69,7 +80,9 @@ def main() -> None:
         test_fraction=args.test_fraction, k=args.k,
         encoder=args.encoder, normalization=args.normalization,
         layout=args.layout, trainable_features=args.features == "trainable",
-        objective=args.objective,
+        objective=args.objective, candidate_pool=args.candidate_pool,
+        scheduler=args.scheduler, schedule_epochs=args.schedule_epochs,
+        min_learning_rate=args.min_learning_rate, dropout=args.dropout,
     )
     try:
         config.validate()
@@ -200,6 +213,7 @@ def main() -> None:
         print(
             f"epoch {epoch:03d}/{config.epochs:03d}  "
             f"loss {record['train_loss']:.4f}  "
+            f"lr {record['end_learning_rate']:.2e}  "
             f"R@{config.k} {record['development_recall']:.4f}  "
             f"nDCG@{config.k} {record['development_ndcg']:.4f}"
             + ("  best *" if improved else ""),

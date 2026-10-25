@@ -26,7 +26,7 @@ from .distmult import DistMultDecoder
 from .evaluation import RankingResult, evaluate_ranking
 from .graph import Graph, Relation, message_graph
 from .model import IndicationModel, NodeEmbeddings
-from .objective import sampled_bce_loss, sampled_bpr_loss, sampled_lsep_loss
+from .objective import mean_lsep_loss, sampled_bce_loss, sampled_bpr_loss, sampled_lsep_loss
 from .rgcn import RGCNEncoder, RelationalAdjacency, rgcn_adjacency
 from .supervision import TrainingSupervision, sample_unjudged, training_supervision
 
@@ -64,17 +64,39 @@ class FitConfig:
     trainable_features: bool
     k: int = 20
     encoder: Literal["rgcn", "compgcn"] = "rgcn"
-    objective: Literal["bce", "bpr", "lsep"] = "bce"
+    objective: Literal["bce", "bpr", "lsep", "lsep_mean"] = "bce"
+    candidate_pool: Literal["sampled", "full"] = "sampled"
+    scheduler: Literal["constant", "cosine"] = "constant"
+    schedule_epochs: int | None = None
+    min_learning_rate: float = 0.0
+    dropout: float = 0.0
 
     def validate(self) -> None:
         if self.epochs < 1 or self.folds < 2 or self.width < 1 or self.negatives < 1:
             raise ValueError("train: epochs, folds, width, and negatives must be positive")
-        if self.objective not in ("bce", "bpr", "lsep"):
+        if self.objective not in ("bce", "bpr", "lsep", "lsep_mean"):
             raise ValueError("train: invalid objective")
+        if self.candidate_pool not in ("sampled", "full"):
+            raise ValueError("train: invalid candidate pool")
+        if self.candidate_pool == "full" and self.objective != "lsep_mean":
+            raise ValueError("train: full candidate pool requires lsep_mean objective")
+        if self.scheduler not in ("constant", "cosine"):
+            raise ValueError("train: invalid scheduler")
+        if self.scheduler == "cosine":
+            if self.schedule_epochs is None or self.schedule_epochs < self.epochs:
+                raise ValueError("train: cosine horizon must cover target epochs")
+            if not 0 <= self.min_learning_rate < self.learning_rate:
+                raise ValueError("train: cosine minimum LR must be below initial LR")
+        elif self.schedule_epochs is not None or self.min_learning_rate != 0:
+            raise ValueError("train: constant scheduler does not take a horizon or minimum LR")
         if self.objective != "bce" and self.negative_weight != 1.0:
             raise ValueError("train: negative weight applies only to BCE")
         if self.encoder not in ("rgcn", "compgcn"):
             raise ValueError("train: invalid encoder")
+        if not math.isfinite(self.dropout) or not 0 <= self.dropout < 1:
+            raise ValueError("train: dropout must be in [0, 1)")
+        if self.encoder == "compgcn" and self.dropout:
+            raise ValueError("train: dropout currently applies only to R-GCN")
         if self.normalization not in ("relation", "total", "directional"):
             raise ValueError("train: invalid normalization")
         if self.encoder == "compgcn" and self.normalization != "directional":
@@ -103,6 +125,7 @@ class _FoldContext(NamedTuple):
     diseases: Tensor
     positive_rows: Tensor
     positive_columns: Tensor
+    eligible: Tensor | None
 
 
 def _write_json(path: Path, value: Any) -> None:
@@ -144,6 +167,22 @@ def _indices(
     )
 
 
+def _eligible_columns(
+    supervision: TrainingSupervision,
+    drug_columns: dict[int, int],
+    device: torch.device,
+) -> Tensor:
+    eligible = torch.ones(
+        (len(supervision.diseases), len(supervision.drugs)), dtype=torch.bool,
+        device=device,
+    )
+    for row, excluded in enumerate(supervision.excluded):
+        eligible[row, [drug_columns[drug] for drug in excluded]] = False
+    if not eligible.any(dim=1).all():
+        raise ValueError("train: disease without eligible candidates")
+    return eligible
+
+
 def _sample_columns(
     supervision: TrainingSupervision,
     drug_columns: dict[int, int],
@@ -174,6 +213,21 @@ def _sampled_scores(
     unjudged_drugs = encoded[drugs[sampled]]
     unjudged_scores = (queries[:, None, :] * unjudged_drugs).sum(dim=-1)
     return positive_scores, unjudged_scores
+
+
+def _full_scores(
+    model: IndicationModel,
+    context: _FoldContext,
+    drugs: Tensor,
+) -> tuple[Tensor, Tensor]:
+    encoded = model.encoder(model.embeddings(), context.adjacency)
+    queries = encoded[context.diseases] * model.decoder.relation
+    positive = (
+        queries[context.positive_rows]
+        * encoded[drugs[context.positive_columns]]
+    ).sum(dim=-1)
+    candidates = queries @ encoded[drugs].T
+    return positive, candidates
 
 
 def _development(
@@ -356,7 +410,13 @@ def fit(
         adjacency = adjacency_builder(visible)
         rows, columns = _indices(supervision, drug_columns, device)
         disease_ids = torch.tensor(supervision.diseases, dtype=torch.long, device=device)
-        contexts.append(_FoldContext(supervision, adjacency, disease_ids, rows, columns))
+        eligible = (
+            _eligible_columns(supervision, drug_columns, device)
+            if config.candidate_pool == "full" else None
+        )
+        contexts.append(_FoldContext(
+            supervision, adjacency, disease_ids, rows, columns, eligible,
+        ))
 
     visible = message_graph(
         source_graph, withheld_diseases=split.withheld, masked_pairs=frozenset(),
@@ -373,12 +433,24 @@ def fit(
     encoder = (
         CompGCNEncoder(source_graph.relations, config.width, config.width, config.width)
         if config.encoder == "compgcn"
-        else RGCNEncoder(source_graph.relations, config.width, config.width, config.width)
+        else RGCNEncoder(
+            source_graph.relations, config.width, config.width, config.width,
+            dropout=config.dropout,
+        )
     )
     model = IndicationModel(embeddings, encoder, DistMultDecoder(config.width)).to(device)
     optimizer = torch.optim.AdamW(
         (parameter for parameter in model.parameters() if parameter.requires_grad),
         lr=config.learning_rate, weight_decay=config.weight_decay,
+    )
+
+    scheduler = (
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=config.schedule_epochs * config.folds,
+            eta_min=config.min_learning_rate,
+        )
+        if config.scheduler == "cosine" and config.schedule_epochs is not None
+        else None
     )
 
     start_epoch = 0
@@ -388,6 +460,12 @@ def fit(
     if state is not None:
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
+        if scheduler is not None:
+            if state.get("scheduler") is None:
+                raise ValueError("train: missing scheduler state")
+            scheduler.load_state_dict(state["scheduler"])
+        elif state.get("scheduler") is not None:
+            raise ValueError("train: unexpected scheduler state")
         random_generator.setstate(state["sampling_rng"])
         torch.set_rng_state(state["torch_rng"])
         if device.type == "cuda":
@@ -422,19 +500,25 @@ def fit(
 
     for epoch in range(start_epoch, config.epochs):
         model.train()
+        epoch_learning_rate = optimizer.param_groups[0]["lr"]
         fold_losses: list[float] = []
         order = list(range(len(contexts)))
         random_generator.shuffle(order)
 
         for index in order:
             context = contexts[index]
-            sampled = _sample_columns(
-                context.supervision, drug_columns, random_generator,
-                config.negatives, device,
-            )
-            positive_scores, unjudged_scores = _sampled_scores(
-                model, context, sampled, drug_ids,
-            )
+            if config.candidate_pool == "full":
+                positive_scores, unjudged_scores = _full_scores(
+                    model, context, drug_ids,
+                )
+            else:
+                sampled = _sample_columns(
+                    context.supervision, drug_columns, random_generator,
+                    config.negatives, device,
+                )
+                positive_scores, unjudged_scores = _sampled_scores(
+                    model, context, sampled, drug_ids,
+                )
             if config.objective == "bce":
                 loss = sampled_bce_loss(
                     positive_scores, context.positive_rows, unjudged_scores,
@@ -444,9 +528,14 @@ def fit(
                 loss = sampled_bpr_loss(
                     positive_scores, context.positive_rows, unjudged_scores,
                 )
-            else:
+            elif config.objective == "lsep":
                 loss = sampled_lsep_loss(
                     positive_scores, context.positive_rows, unjudged_scores,
+                )
+            else:
+                loss = mean_lsep_loss(
+                    positive_scores, context.positive_rows, unjudged_scores,
+                    eligible=context.eligible,
                 )
             if not torch.isfinite(loss).item():
                 raise RuntimeError(f"train: nonfinite loss at epoch {epoch + 1}")
@@ -459,6 +548,8 @@ def fit(
                 ):
                     raise RuntimeError(f"train: invalid gradient for {name}")
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             fold_losses.append(float(loss.detach()))
 
         result, scores = _development(
@@ -468,6 +559,11 @@ def fit(
         record = {
             "epoch": epoch + 1,
             "train_loss": sum(fold_losses) / len(fold_losses),
+            "learning_rate": epoch_learning_rate,
+            "end_learning_rate": optimizer.param_groups[0]["lr"],
+            "optimizer_steps": (epoch + 1) * len(contexts),
+            "embedding_rms": float(model.embeddings.weight.detach().square().mean().sqrt()),
+            "decoder_norm": float(model.decoder.relation.detach().norm()),
             "development_recall": result.recall,
             "development_ndcg": result.ndcg,
             "development_mrr": result.reciprocal_rank,
@@ -491,6 +587,7 @@ def fit(
             "metadata": metadata,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
             "sampling_rng": random_generator.getstate(),
             "torch_rng": torch.get_rng_state(),
             "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else [],

@@ -4,6 +4,7 @@ from typing import Literal, NamedTuple
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 from .graph import Graph, Relation
 
@@ -105,12 +106,16 @@ class RGCNLayer(nn.Module):
 class RGCNEncoder(nn.Module):
     def __init__(
         self, relations: tuple[Relation, ...], in_features: int,
-        hidden_features: int, out_features: int,
+        hidden_features: int, out_features: int, *, dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        if not 0 <= dropout < 1:
+            raise ValueError("rgcn: dropout must be in [0, 1)")
+        self.dropout = dropout
         self.first = RGCNLayer(relations, in_features, hidden_features)
         self.second = RGCNLayer(relations, hidden_features, out_features)
 
     def forward(self, features: Tensor, graph: RelationalAdjacency) -> Tensor:
         hidden = torch.relu(self.first(features, graph))
+        hidden = F.dropout(hidden, p=self.dropout, training=self.training)
         return self.second(hidden, graph)

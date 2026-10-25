@@ -89,3 +89,37 @@ def sampled_lsep_loss(
 
     # log(1 + sum_{p,u} exp(s_u - s_p)) = softplus(logsumexp_u + logsumexp_p)
     return F.softplus(torch.logsumexp(unjudged_scores, dim=1) + log_positive).mean()
+
+
+def mean_lsep_loss(
+    positive_scores: Tensor,
+    positive_rows: Tensor,
+    candidate_scores: Tensor,
+    *,
+    eligible: Tensor | None = None,
+) -> Tensor:
+    # Disease-macro log(1 + mean_{p,u} exp(s_u - s_p))
+    positive_counts = _validate_scores(positive_scores, positive_rows, candidate_scores)
+    diseases, candidates = candidate_scores.shape
+
+    if eligible is None:
+        eligible_counts = torch.full(
+            (diseases,), candidates, device=candidate_scores.device, dtype=torch.long,
+        )
+        negative = candidate_scores
+    else:
+        if eligible.shape != candidate_scores.shape or eligible.dtype != torch.bool:
+            raise ValueError("objective: eligible mask must match scores and be boolean")
+        eligible_counts = eligible.sum(dim=1)
+        if not (eligible_counts > 0).all():
+            raise ValueError("objective: every disease requires an eligible candidate")
+        negative = candidate_scores.masked_fill(~eligible, -torch.inf)
+
+    values = -positive_scores
+    maxima = values.new_full((diseases,), -torch.inf)
+    maxima.scatter_reduce_(0, positive_rows, values.detach(), reduce="amax")
+    sums = values.new_zeros(diseases)
+    sums.index_add_(0, positive_rows, (values - maxima[positive_rows]).exp())
+    log_positive_mean = maxima + sums.log() - positive_counts.to(values.dtype).log()
+    log_negative_mean = torch.logsumexp(negative, dim=1) - eligible_counts.to(negative.dtype).log()
+    return F.softplus(log_positive_mean + log_negative_mean).mean()
