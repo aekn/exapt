@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import warnings
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,7 @@ def _clock(seconds: float) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Fit a disease-masked relational encoder on verified PrimeKG.",
-        allow_abbrev=False,
-    )
+    parser = argparse.ArgumentParser(description="Fit a disease-masked relational encoder on verified PrimeKG.", allow_abbrev=False)
     parser.add_argument("source", type=Path, help="verified PrimeKG source directory")
     parser.add_argument("output", type=Path, help="experiment directory (new unless --resume)")
 
@@ -37,28 +35,18 @@ def main() -> None:
     model = parser.add_argument_group("model and graph")
     model.add_argument("--encoder", required=True, choices=("rgcn", "compgcn"))
     model.add_argument("--width", required=True, type=int)
-    model.add_argument(
-        "--normalization", required=True, choices=("relation", "total", "directional"),
-    )
+    model.add_argument("--normalization", required=True, choices=("relation", "total", "directional"))
     model.add_argument("--layout", required=True, choices=("coo", "csr"))
     model.add_argument("--features", required=True, choices=("trainable", "fixed"))
     model.add_argument("--dropout", type=float, default=0.0)
 
     optimization = parser.add_argument_group("optimization")
-    optimization.add_argument(
-        "--objective", choices=("bce", "bpr", "lsep", "lsep_mean"), default="bce",
-    )
-    optimization.add_argument(
-        "--candidate-pool", choices=("sampled", "full"), default="sampled",
-    )
-    optimization.add_argument(
-        "--scheduler", choices=("constant", "cosine"), default="constant",
-    )
+    optimization.add_argument("--objective", choices=("bce", "bpr", "lsep", "lsep_mean"), default="bce")
+    optimization.add_argument("--candidate-pool", choices=("sampled", "full"), default="sampled")
+    optimization.add_argument("--scheduler", choices=("constant", "cosine"), default="constant")
     optimization.add_argument("--schedule-epochs", type=int)
     optimization.add_argument("--min-learning-rate", type=float, default=0.0)
-    optimization.add_argument(
-        "--seed", required=True, type=int, help="initialization and sampling seed",
-    )
+    optimization.add_argument("--seed", required=True, type=int, help="initialization and sampling seed")
     optimization.add_argument("--epochs", required=True, type=int)
     optimization.add_argument("--negatives", required=True, type=int)
     optimization.add_argument("--negative-weight", required=True, type=float)
@@ -72,6 +60,19 @@ def main() -> None:
     execution.add_argument("--dataset-revision", help="pinned Hugging Face dataset commit")
     execution.add_argument("--purpose", default="", help="brief experiment purpose")
     args = parser.parse_args()
+
+    warnings.filterwarnings(
+        "ignore",
+        message=r"^Failed to initialize NumPy: No module named 'numpy'",
+        category=UserWarning,
+        module=r"^torch\._subclasses\.functional_tensor$",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"^Sparse CSR tensor support is in beta state\.",
+        category=UserWarning,
+        module=r"^exapt\.rgcn$",
+    )
 
     import torch
 
@@ -218,6 +219,7 @@ def main() -> None:
     fit_total = 0.0
     development_total = 0.0
     header_printed = False
+    columns = "{:>5}   {:>8}   {:>8}   {:>7}   {:>7}   {:>8}"
 
     def report(record: dict[str, Any], fit_seconds: float, development_seconds: float) -> None:
         nonlocal best_score, fit_total, development_total, header_printed
@@ -231,21 +233,20 @@ def main() -> None:
         if not header_printed:
             print(file=sys.stderr, flush=True)
             print(
-                f"{'epoch':4}   {'loss':>8}  {'lr':>8}  "
-                f"{f'R@{config.k}':>6}  {f'nDCG@{config.k}':>7}  "
-                f"{'wall':>8}  best",
+                columns.format("epoch", "loss", "lr", f"R@{config.k}", f"nDCG@{config.k}", "wall"),
                 file=sys.stderr, flush=True,
             )
             header_printed = True
 
         print(
-            f"{record['epoch']:04d}   "
-            f"{record['train_loss']:8.4f}  "
-            f"{record['end_learning_rate']:8.2e}  "
-            f"{record['development_recall']:6.4f}  "
-            f"{record['development_ndcg']:7.4f}  "
-            f"{_clock(fit_seconds + development_seconds):>8}  "
-            f"{'*' if improved else ''}",
+            columns.format(
+                f"{record['epoch']:04d}",
+                f"{record['train_loss']:.4f}",
+                f"{record['end_learning_rate']:.2e}",
+                f"{record['development_recall']:.4f}",
+                f"{record['development_ndcg']:.4f}",
+                _clock(fit_seconds + development_seconds),
+            ) + ("   *" if improved else ""),
             file=sys.stderr, flush=True,
         )
         if bucket is not None:
