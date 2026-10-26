@@ -12,6 +12,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Literal, NamedTuple
 
 import torch
@@ -300,7 +301,7 @@ def fit(
     dataset_revision: str | None = None,
     purpose: str = "",
     resume: bool = False,
-    on_epoch: Callable[[dict[str, Any]], None] | None = None,
+    on_epoch: Callable[[dict[str, Any], float, float], None] | None = None,
 ) -> dict[str, Any]:
     """Train disease-masked folds; select by development Recall@k, then nDCG@k."""
     config.validate()
@@ -498,8 +499,16 @@ def fit(
         _write_json(output / "development.json", selected["rankings"])
         _write_history(output / "epochs.jsonl", history)
 
+    def synchronize() -> None:
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device.type == "mps":
+            torch.mps.synchronize()
+
     for epoch in range(start_epoch, config.epochs):
         model.train()
+        synchronize()
+        fit_started = perf_counter()
         epoch_learning_rate = optimizer.param_groups[0]["lr"]
         fold_losses: list[float] = []
         order = list(range(len(contexts)))
@@ -552,10 +561,15 @@ def fit(
                 scheduler.step()
             fold_losses.append(float(loss.detach()))
 
+        synchronize()
+        fit_seconds = perf_counter() - fit_started
+        development_started = perf_counter()
         result, scores = _development(
             model, development_graph, facts, split,
             drugs=drugs, k=config.k, device=device,
         )
+        synchronize()
+        development_seconds = perf_counter() - development_started
         record = {
             "epoch": epoch + 1,
             "train_loss": sum(fold_losses) / len(fold_losses),
@@ -603,7 +617,7 @@ def fit(
                 if older.name != f"e{epoch + 1:04d}.pt":
                     older.unlink()
         if on_epoch is not None:
-            on_epoch(record.copy())
+            on_epoch(record.copy(), fit_seconds, development_seconds)
 
     best_epoch = max(history, key=lambda row: (
         row["development_recall"], row["development_ndcg"],

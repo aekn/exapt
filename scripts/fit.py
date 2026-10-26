@@ -6,8 +6,17 @@ import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from time import perf_counter
 from typing import Any
+
+
+def _log(event: str, detail: str) -> None:
+    print(f"{event:<8} {detail}", file=sys.stderr, flush=True)
+
+
+def _clock(seconds: float) -> str:
+    hours, remaining = divmod(round(seconds), 3600)
+    minutes, seconds = divmod(remaining, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def main() -> None:
@@ -123,6 +132,7 @@ def main() -> None:
 
     bucket = None
     token = None
+    recovered_epoch = None
     if args.bucket_run is not None:
         from exapt.storage import BucketRun
 
@@ -135,7 +145,7 @@ def main() -> None:
                 previous_epoch = bucket.restore(args.output, token=token)
                 if previous_epoch is not None:
                     args.resume = True
-                    print(f"storage   recovered epoch {previous_epoch}", file=sys.stderr, flush=True)
+                    recovered_epoch = previous_epoch
         except (OSError, RuntimeError, ValueError, KeyError) as error:
             parser.error(f"cannot restore Bucket run: {error}")
 
@@ -165,33 +175,35 @@ def main() -> None:
         parser.error("invalid Git revision")
     if args.dataset_revision is not None and re.fullmatch(r"[0-9a-f]{40}", args.dataset_revision) is None:
         parser.error("--dataset-revision must be a full commit SHA")
-    print(
-        f"exapt {args.bucket_run or args.output.name}  "
-        f"{config.encoder}/{config.objective}  seed={config.seed}",
-        file=sys.stderr, flush=True,
-    )
-    if git_sha is not None:
-        print(f"code      {git_sha[:12]}  pinned", file=sys.stderr, flush=True)
-    print(f"device    {device}", file=sys.stderr, flush=True)
-    started = perf_counter()
-    print("source    reading therapeutics", file=sys.stderr, flush=True)
-    facts = load_therapeutics(args.source)
-    print(
-        f"source    {len(facts.diseases):,} diseases  {perf_counter() - started:.1f}s",
-        file=sys.stderr, flush=True,
-    )
+    run = args.bucket_run or args.output.name
+    location = f"exapt-lab/hangar/runs/{args.bucket_run}" if bucket is not None else None
+    device_name = str(device)
+    if device.type == "cuda":
+        device_name += f" / {torch.cuda.get_device_name(device)}"
 
-    graph_started = perf_counter()
-    print("graph     reading source arcs", file=sys.stderr, flush=True)
+    print(f"exapt / {run}\n", file=sys.stderr, flush=True)
+    _log("model", f"{config.encoder} / distmult")
+    _log("train", f"{config.objective} / {config.normalization} / n{config.negatives} / w{config.width}")
+    _log("seed", str(config.seed))
+    _log("folds", str(config.folds))
+    _log("budget", f"{config.epochs} epochs")
+    _log("device", device_name)
+    _log("local", str(args.output))
+    if location is not None:
+        _log("bucket", location)
+    if recovered_epoch is not None:
+        _log("resume", f"epoch {recovered_epoch} / target {config.epochs}")
+
+    print(file=sys.stderr, flush=True)
+    _log("source", "load therapeutics")
+    facts = load_therapeutics(args.source)
+    _log("source", f"ready / {len(facts.diseases):,} diseases")
+    _log("graph", "load source arcs")
     graph = load_graph(
         args.source, withheld_diseases=frozenset(), masked_pairs=frozenset(),
     )
-    print(
-        f"graph     {graph.edge_count:,} arcs  {perf_counter() - graph_started:.1f}s"
-        f"  {perf_counter() - started:.1f}s total",
-        file=sys.stderr, flush=True,
-    )
-    print("training  preparing masked folds", file=sys.stderr, flush=True)
+    _log("graph", f"ready / {graph.edge_count:,} arcs")
+    _log("folds", "prepare masked contexts")
 
     best_score: tuple[float, float] | None = None
     if args.resume:
@@ -203,31 +215,42 @@ def main() -> None:
             default=None,
         )
 
-    def report(record: dict[str, Any]) -> None:
-        nonlocal best_score
+    fit_total = 0.0
+    development_total = 0.0
+    header_printed = False
+
+    def report(record: dict[str, Any], fit_seconds: float, development_seconds: float) -> None:
+        nonlocal best_score, fit_total, development_total, header_printed
+        fit_total += fit_seconds
+        development_total += development_seconds
         score = (record["development_recall"], record["development_ndcg"])
         improved = best_score is None or score > best_score
         if improved:
             best_score = score
-        epoch = record["epoch"]
+
+        if not header_printed:
+            print(file=sys.stderr, flush=True)
+            print(
+                f"{'epoch':4}   {'loss':>8}  {'lr':>8}  "
+                f"{f'R@{config.k}':>6}  {f'nDCG@{config.k}':>7}  "
+                f"{'wall':>8}  best",
+                file=sys.stderr, flush=True,
+            )
+            header_printed = True
+
         print(
-            f"epoch {epoch:03d}/{config.epochs:03d}  "
-            f"loss {record['train_loss']:.4f}  "
-            f"lr {record['end_learning_rate']:.2e}  "
-            f"R@{config.k} {record['development_recall']:.4f}  "
-            f"nDCG@{config.k} {record['development_ndcg']:.4f}"
-            + ("  best *" if improved else ""),
+            f"{record['epoch']:04d}   "
+            f"{record['train_loss']:8.4f}  "
+            f"{record['end_learning_rate']:8.2e}  "
+            f"{record['development_recall']:6.4f}  "
+            f"{record['development_ndcg']:7.4f}  "
+            f"{_clock(fit_seconds + development_seconds):>8}  "
+            f"{'*' if improved else ''}",
             file=sys.stderr, flush=True,
         )
         if bucket is not None:
             assert token is not None
-            print(f"storage   publishing epoch {epoch:03d}", file=sys.stderr, flush=True)
             bucket.publish(args.output, token=token)
-        if improved:
-            print(f"  saved    selected/e{epoch:04d}.pt", file=sys.stderr, flush=True)
-        print(f"  saved    resume/e{epoch:04d}.pt" +
-              ("  (HF Bucket)" if bucket is not None else "  (local)"),
-              file=sys.stderr, flush=True)
 
     result = fit(
         facts, graph, config=config, source_sha256=source_sha256,
@@ -236,16 +259,24 @@ def main() -> None:
         dataset_revision=args.dataset_revision, purpose=args.purpose,
     )
     best = result["best_development"]
-    print(
-        f"complete  {result['completed_epochs']} epochs\n"
-        f"selected  epoch {result['best_epoch']:03d}  "
-        f"R@{config.k} {best['development_recall']:.4f}  "
-        f"nDCG@{config.k} {best['development_ndcg']:.4f}",
-        file=sys.stderr, flush=True,
+    print(file=sys.stderr, flush=True)
+    _log(
+        "done", f"{result['completed_epochs']} epochs / "
+        f"{result['completed_epochs'] * config.folds} updates",
     )
-    if bucket is not None:
-        print(f"storage   exapt-lab/hangar/runs/{args.bucket_run}",
-              file=sys.stderr, flush=True)
+    _log(
+        "best", f"e{result['best_epoch']:04d} / "
+        f"R@{config.k} {best['development_recall']:.4f} / "
+        f"nDCG@{config.k} {best['development_ndcg']:.4f}",
+    )
+    _log(
+        "time", f"fit {_clock(fit_total)} / dev {_clock(development_total)} / "
+        f"session {_clock(fit_total + development_total)}",
+    )
+    if location is not None:
+        _log("bucket", location)
+    else:
+        _log("local", str(args.output))
 
 
 if __name__ == "__main__":
